@@ -1,0 +1,6 @@
+data-raw/
+.Rproj.user/
+.Rhistory
+.RData
+*_cache/
+*_files/

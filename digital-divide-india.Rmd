@@ -1,0 +1,750 @@
+---
+title: "The Digital Divide in India: Money, Gender, Education and Age"
+subtitle: "Evidence from the NSS 79th Round Comprehensive Annual Modular Survey (CAMS), 2022-23"
+author: "Aakansha Sylvia Tamang, Ananya Rathour, Angel Elizabeth and Bhavya — B.A. Economics Honours, 
+Christ University"
+date: "November 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 110)
+```
+
+## Summary
+
+India has put a phone in almost every household. The harder question is **who
+actually gets online, who benefits, and whether rising incomes fix the gaps on
+their own.** Using about one million adults from the Government of India's
+2022-23 CAMS survey, we find that:
+
+1. **Phones are near-universal; computers are not.** 92% of the poorest fifth
+   of households have a mobile phone against 98% of the richest, but only 0.9%
+   of the poorest own a computer against 29.4% of the richest.
+2. **The gender gap in internet use narrows with income but never closes.** A
+   woman in the richest fifth of households (73.8%) is only level with a man in
+   the fourth fifth (74.1%).
+3. **The gap is generational.** For 15-24 year-olds in the richest fifth it is
+   1.7 percentage points; for 35-44 year-olds in the poorest fifth it is 27.5.
+4. **Money buys women connectivity, not work.** As household spending rises,
+   women's internet use climbs steeply while their economic participation
+   drifts down slightly (35.5% to 32.1%).
+5. **Regression confirms it.** After controlling for income, age, education
+   and sector, women still have about 54% lower odds of using the internet
+   (odds ratio 0.46), and digital skill is linked to work mainly in the
+   richest households.
+
+**How the report is organised.** Part 1 is descriptive and uses survey weights,
+so its figures describe the Indian population. Part 2 tests whether those
+patterns are too large to be chance and whether they survive when several
+factors are considered together.
+
+**Colour key.** Teal = men, amber = women, throughout. Charts on income use a
+light-to-dark teal scale, and the gap heatmap runs from cream to burnt orange.
+The two sex colours are distinguishable for colour-blind readers too.
+
+## Data and Reproducibility
+
+**Source.** Ministry of Statistics and Programme Implementation (MoSPI),
+National Sample Survey Office, 79th Round, *Comprehensive Annual Modular
+Survey* (2022-23), unit-level data. We use the household, member and course
+files.
+
+**What is in this repository.** The raw files are very large, so
+`prepare_data.R` reduces them to two compact analysis files (`data/`) holding
+only the variables used here, for adults aged 15+ recorded as male or female.
+Every derived variable is built in that script, so the pipeline from raw survey
+to chart can be audited end to end.
+
+```{r load-libraries}
+library(tidyverse)   # data wrangling and ggplot2
+library(here)        # file paths that work on any computer
+library(survey)      # survey weights and design
+library(srvyr)       # survey tools in tidyverse style
+library(broom)       # tidy model output
+library(car)         # vif() multicollinearity checks
+```
+
+```{r load-data}
+households <- readRDS(here("data", "cams_households.rds"))
+members    <- readRDS(here("data", "cams_members.rds"))
+
+# One palette, defined once, used everywhere
+sex_cols <- c(Male = "#1F7A8C", Female = "#E9A03B")   # deep teal / warm amber
+q_labels <- levels(households$mpce_quintile)
+q_cols   <- colorRampPalette(c("#CFE8E4", "#1F5F6B"))(5)   # light to deep teal
+```
+
+**Households:** `r format(nrow(households), big.mark = ",")` &nbsp;|&nbsp;
+**Adults (15+):** `r format(nrow(members), big.mark = ",")`
+
+### Variables we constructed
+
+* **Survey weight** = `MULT / 100`, as stated in the survey's readme.
+* **Economic status.** Usual monthly consumer expenditure divided by household
+  size gives **monthly per capita expenditure (MPCE)**, the standard measure of
+  living standards in Indian survey work. Households are sorted into five equal
+  groups (**quintiles**) from poorest to richest using *weighted* cut-offs, so
+  each quintile represents a fifth of the population, not a fifth of the sample.
+* **Digital capability score (0-4)** = owns a smartphone + can use the internet
+  + can send email + can do digital banking. Someone is "Low" at 0-1,
+  "Medium" at 2-3 and "High" at 4.
+* **Skip-pattern correction.** The email and banking questions are asked only of
+  people who can already use the internet, which is asked only of phone
+  owners. A blank therefore means "skipped because the answer upstream was no",
+  not "missing". Coding blanks as `NA` would silently drop 37.6% of adults, and
+  precisely the least digital ones, biasing every result upwards. We code them
+  as 0.
+* **Education** is a simple flag for whether a person appears in the survey's
+  course file at all. It is *not* years of schooling.
+* **Sex of household head.** Devices are recorded per household, so household
+  charts compare male-headed with female-headed households, not individual men
+  and women.
+
+```{r capability}
+members <- members |>
+  mutate(
+    age_group = cut(age, breaks = c(14, 24, 34, 44, 59, 200),
+                    labels = c("15-24", "25-34", "35-44", "45-59", "60+")),
+    capability_score = mobile_smartphone + can_use_internet +
+      can_email + can_digital_bank,
+    capability_tier = factor(
+      case_when(capability_score <= 1 ~ "Low",
+                capability_score <= 3 ~ "Medium",
+                TRUE ~ "High"),
+      levels = c("Low", "Medium", "High"))
+  )
+
+stopifnot(!anyNA(members$capability_score), !anyNA(members$mpce_quintile))
+
+hh_design     <- as_survey_design(households, ids = FSU, strata = stratum_1, weights = weight)
+member_design <- as_survey_design(members,    ids = FSU, strata = stratum_1, weights = weight)
+```
+
+```{r validate-weights, include=FALSE}
+hh_internet <- weighted.mean(households$has_internet == "Yes", households$weight)
+```
+
+**Validation check.** Our weighted estimate of household internet access is
+**`r round(100 * hh_internet, 1)`%** (computed live from the data). The official
+CAMS 2022-23 report gives 76.3%, so the import, weights and derived variables
+are behaving correctly.
+
+---
+
+# Part 1: Descriptive Evidence (survey-weighted)
+
+## 1. Who can afford to get online?
+
+### Household access by sex of household head
+
+```{r chart-1-bar}
+access_by_head_sex <- hh_design |>
+  filter(head_sex %in% c("Male", "Female")) |>
+  group_by(head_sex) |>
+  summarize(
+    Mobile   = survey_mean(has_mobile == "Yes", vartype = NULL) * 100,
+    Computer = survey_mean(has_computer == "Yes", vartype = NULL) * 100,
+    Internet = survey_mean(has_internet == "Yes", vartype = NULL) * 100
+  ) |>
+  pivot_longer(c(Mobile, Computer, Internet), names_to = "device", values_to = "pct")
+
+ggplot(access_by_head_sex, aes(device, pct, fill = head_sex)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = sex_cols) +
+  labs(title = "Household digital access, by sex of household head",
+       subtitle = "Describes the household's head, not individual men and women",
+       x = NULL, y = "Households with access (%)", fill = "Household head") +
+  theme_minimal()
+```
+
+Female-headed households look less connected. But a female-headed household is,
+on average, also a poorer household, so before reading this as a gender effect
+we look at spending power.
+
+### Household access by spending power (MPCE quintile)
+
+```{r chart-1b-bar}
+access_by_quintile <- hh_design |>
+  filter(!is.na(mpce_quintile)) |>
+  group_by(mpce_quintile) |>
+  summarize(
+    Mobile   = survey_mean(has_mobile == "Yes", vartype = NULL) * 100,
+    Computer = survey_mean(has_computer == "Yes", vartype = NULL) * 100,
+    Internet = survey_mean(has_internet == "Yes", vartype = NULL) * 100
+  ) |>
+  pivot_longer(c(Mobile, Computer, Internet), names_to = "device", values_to = "pct") |>
+  mutate(device = factor(device, levels = c("Mobile", "Internet", "Computer")))
+
+ggplot(access_by_quintile, aes(mpce_quintile, pct, fill = mpce_quintile)) +
+  geom_col() +
+  geom_text(aes(label = round(pct, 1)), vjust = -0.4, size = 3) +
+  facet_wrap(~ device) +
+  scale_fill_manual(values = q_cols) +
+  scale_y_continuous(limits = c(0, 105)) +
+  labs(title = "Household digital access rises steeply with spending power",
+       subtitle = "Monthly per capita expenditure quintiles, weighted",
+       x = "MPCE quintile", y = "Households with access (%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+**What this shows.** The three devices behave very differently. A mobile phone
+is close to universal and barely moves with income (92.0% in the poorest fifth
+to 97.8% in the richest). Internet access moves moderately (62.9% to 88.5%). A
+computer is almost purely a function of money: **0.9% of the poorest fifth own
+one against 29.4% of the richest, a gap of more than thirty times.** India has
+not one digital divide but at least two: a shallow one for phones and a deep one
+for the devices used to do skilled work.
+
+### Does the sex-of-head gap survive once income is held roughly equal?
+
+```{r chart-1c-line}
+access_q_sex <- hh_design |>
+  filter(head_sex %in% c("Male", "Female"), !is.na(mpce_quintile)) |>
+  group_by(mpce_quintile, head_sex) |>
+  summarize(Internet = survey_mean(has_internet == "Yes", vartype = NULL) * 100)
+
+ggplot(access_q_sex, aes(mpce_quintile, Internet, colour = head_sex, group = head_sex)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = sex_cols) +
+  labs(title = "Household internet access, by spending power and sex of head",
+       subtitle = "The sex-of-head gap is small once households of similar means are compared",
+       x = "MPCE quintile", y = "Households with internet access (%)",
+       colour = "Household head") +
+  theme_minimal()
+```
+
+**What this shows.** The two lines sit close together at every income level.
+Most of the apparent "female-headed households have less access" story is an
+income story. The more interesting gender question is not whether a device
+enters the house but **who in the house gets to use it**.
+
+## 2. Within a household, who actually uses it?
+
+### Digital skills by sex
+
+```{r chart-2-bar}
+use_by_sex <- member_design |>
+  group_by(sex) |>
+  summarize(
+    `Smartphone use`  = 100 * survey_mean(mobile_smartphone == 1, vartype = NULL),
+    `Internet use`    = 100 * survey_mean(can_use_internet == 1, vartype = NULL),
+    `Email use`       = 100 * survey_mean(can_email == 1, vartype = NULL),
+    `Digital banking` = 100 * survey_mean(can_digital_bank == 1, vartype = NULL)
+  ) |>
+  pivot_longer(-sex, names_to = "indicator", values_to = "pct") |>
+  mutate(indicator = factor(indicator, levels = c("Smartphone use", "Internet use",
+                                                  "Email use", "Digital banking")))
+
+ggplot(use_by_sex, aes(indicator, pct, fill = sex)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = sex_cols) +
+  labs(title = "Digital skills, by sex (individuals aged 15+)",
+       x = NULL, y = "Percent able to do the task", fill = "Sex") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+### Internet use by sex and spending power
+
+```{r chart-2b-bar}
+net_by_q_sex <- member_design |>
+  filter(!is.na(mpce_quintile)) |>
+  group_by(mpce_quintile, sex) |>
+  summarize(pct_net = 100 * survey_mean(can_use_internet == 1, vartype = NULL))
+
+ggplot(net_by_q_sex, aes(mpce_quintile, pct_net, fill = sex)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = round(pct_net)), position = position_dodge(width = 0.9),
+            vjust = -0.4, size = 3) +
+  scale_fill_manual(values = sex_cols) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(title = "Internet use rises with income for both sexes, but the ladders never meet",
+       subtitle = "Age 15+, weighted. Women in the richest fifth only match men in the fourth.",
+       x = "MPCE quintile", y = "Can use the internet (%)", fill = "Sex") +
+  theme_minimal()
+```
+
+**What this shows.** Income matters more than gender in raw size: moving from
+the poorest to the richest fifth adds about 36 percentage points for women
+(37.7% to 73.8%), while the gender gap at any income level is 12 to 17 points.
+But the bars never level up. **A woman in the richest fifth of households
+(73.8%) is only just level with a man in the fourth fifth (74.1%).**
+
+### The size of the gap itself
+
+```{r chart-2c-dumbbell}
+gap_data <- net_by_q_sex |>
+  select(mpce_quintile, sex, pct_net) |>
+  pivot_wider(names_from = sex, values_from = pct_net) |>
+  mutate(gap = Male - Female)
+
+ggplot(gap_data, aes(y = fct_rev(mpce_quintile))) +
+  geom_segment(aes(x = Female, xend = Male, yend = fct_rev(mpce_quintile)),
+               colour = "grey70", linewidth = 2.5) +
+  geom_point(aes(x = Female, colour = "Female"), size = 5) +
+  geom_point(aes(x = Male, colour = "Male"), size = 5) +
+  geom_text(aes(x = (Female + Male) / 2, label = paste0(round(gap, 1), " pp")),
+            vjust = -1.3, size = 3.2) +
+  scale_colour_manual(values = sex_cols) +
+  labs(title = "The digital gender gap narrows as households get richer",
+       subtitle = "Gap in internet use, men minus women, percentage points (age 15+)",
+       x = "Can use the internet (%)", y = "MPCE quintile", colour = "Sex") +
+  theme_minimal()
+```
+
+**What this shows.** The gap falls from 16.6 points in the poorest fifth to 11.6
+in the richest. That is real progress but slow: a 36-point rise in household
+living standards buys only a 5-point cut in the gender gap.
+
+### Capability by education and sex
+
+```{r chart-3-bar}
+cap_by_edu <- member_design |>
+  group_by(has_course, sex) |>
+  summarize(mean_cap = survey_mean(capability_score, vartype = NULL))
+
+ggplot(cap_by_edu, aes(has_course, mean_cap, fill = sex)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = round(mean_cap, 2)), position = position_dodge(width = 0.9),
+            vjust = -0.4, size = 3) +
+  scale_fill_manual(values = sex_cols) +
+  labs(title = "Digital capability, by education and sex",
+       subtitle = "Mean score out of 4, weighted. Education = appears in the course file.",
+       x = "Has a course record", y = "Mean capability score (0-4)", fill = "Sex") +
+  theme_minimal()
+```
+
+### Capability by income, sex and sector
+
+```{r chart-3b-line}
+cap_by_q_sex_sector <- member_design |>
+  filter(!is.na(mpce_quintile)) |>
+  group_by(sector, mpce_quintile, sex) |>
+  summarize(mean_cap = survey_mean(capability_score, vartype = NULL))
+
+ggplot(cap_by_q_sex_sector, aes(mpce_quintile, mean_cap, colour = sex, group = sex)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ sector) +
+  scale_colour_manual(values = sex_cols) +
+  labs(title = "Mean digital capability, by spending power, sex and sector",
+       subtitle = "Score of 0-4. Rural women start lowest and stay lowest at every income level.",
+       x = "MPCE quintile", y = "Mean capability score (0-4)", colour = "Sex") +
+  theme_minimal()
+```
+
+**What this shows.** All lines slope upwards, so money raises capability
+everywhere. But rural and urban panels sit at different levels: a rural
+household has to be considerably richer to match an urban household's
+capability. Rural women are the lowest line at every point on the income scale.
+
+## 3. Where has the gap already closed?
+
+### Capability across age groups
+
+```{r chart-4-line}
+capability_by_age_sex <- member_design |>
+  group_by(age_group, sex) |>
+  summarize(mean_capability = survey_mean(capability_score, vartype = NULL))
+
+ggplot(capability_by_age_sex, aes(age_group, mean_capability, colour = sex, group = sex)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(values = sex_cols) +
+  labs(title = "Mean digital capability score across age groups, by sex",
+       subtitle = "Does the gap between the sexes widen or narrow with age?",
+       x = "Age group", y = "Mean capability score (0-4)", colour = "Sex") +
+  theme_minimal()
+```
+
+### The gap by age *and* income
+
+Each tile is one age-and-income cell. The number is how many percentage points
+more men use the internet than women in that cell.
+
+```{r chart-4b-heatmap}
+gap_heat <- member_design |>
+  filter(!is.na(mpce_quintile)) |>
+  group_by(age_group, mpce_quintile, sex) |>
+  summarize(pct_net = 100 * survey_mean(can_use_internet == 1, vartype = NULL)) |>
+  select(age_group, mpce_quintile, sex, pct_net) |>
+  pivot_wider(names_from = sex, values_from = pct_net) |>
+  mutate(gap = Male - Female)
+
+ggplot(gap_heat, aes(mpce_quintile, fct_rev(age_group), fill = gap)) +
+  geom_tile(colour = "white", linewidth = 1) +
+  geom_text(aes(label = round(gap, 1)), size = 3.2) +
+  scale_fill_gradient(low = "#FBF1DF", high = "#B5541C") +
+  labs(title = "The digital gender gap, by age and spending power",
+       subtitle = "Men's internet use minus women's, percentage points. Darker = wider gap.",
+       x = "MPCE quintile", y = "Age group", fill = "Gap (pp)") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
+
+**What this shows.** The gap is a landscape, not one number.
+
+* Among **15-24 year-olds in the richest fifth the gap is 1.7 points**:
+  effectively closed.
+* The **worst cell is 35-44 year-olds in the poorest fifth, at 27.5 points**:
+  the cohort that reached adulthood before cheap smartphones and lacked the
+  money to catch up.
+* For the young, money closes the gap fast (13.5 points in Q1 to 1.7 in Q5). For
+  45-59 year-olds it barely helps.
+* Among the **60+ the gap widens with income** (4.8 to 19.5 points). This is
+  not a reversal: almost nobody in the poorest elderly group is online, so
+  there is no room for a gap. A near-zero gap can mean equality or *shared
+  exclusion*, and a chart like this is how you tell them apart.
+
+### Who is online, by age
+
+```{r chart-5-age}
+age_net <- member_design |>
+  group_by(age_group) |>
+  summarize(pct = 100 * survey_mean(can_use_internet == 1, vartype = NULL))
+
+ggplot(age_net, aes(age_group, pct)) +
+  geom_col(fill = "#1F7A8C") +
+  geom_text(aes(label = round(pct)), vjust = -0.4, size = 3) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(title = "Share able to use the internet, by age group",
+       subtitle = "Adults 15+, weighted, men and women combined",
+       x = "Age group", y = "Can use the internet (%)") +
+  theme_minimal()
+```
+
+## 4. Does being online translate into economic participation?
+
+"Economically active" means working or seeking work in the last 7 days.
+
+### By capability tier and sex
+
+```{r chart-6-bar}
+econ_by_tier_sex <- member_design |>
+  group_by(capability_tier, sex) |>
+  summarize(pct_active = 100 * survey_mean(economically_active == "Yes", vartype = NULL))
+
+ggplot(econ_by_tier_sex, aes(capability_tier, pct_active, fill = sex)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = sex_cols) +
+  labs(title = "Economic participation, by digital capability tier and sex",
+       subtitle = "Association only, not a causal claim",
+       x = "Digital capability tier", y = "Economically active, last 7 days (%)", fill = "Sex") +
+  theme_minimal()
+```
+
+### Does money buy women jobs the way it buys them internet?
+
+```{r chart-6b-line}
+econ_by_q_sex <- member_design |>
+  filter(!is.na(mpce_quintile)) |>
+  group_by(mpce_quintile, sex) |>
+  summarize(
+    `Can use the internet` = 100 * survey_mean(can_use_internet == 1, vartype = NULL),
+    `Economically active`  = 100 * survey_mean(economically_active == "Yes", vartype = NULL)
+  ) |>
+  pivot_longer(c(`Can use the internet`, `Economically active`),
+               names_to = "outcome", values_to = "pct")
+
+ggplot(econ_by_q_sex, aes(mpce_quintile, pct, colour = sex, group = sex)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ outcome) +
+  scale_colour_manual(values = sex_cols) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(title = "Money buys women connectivity, but not work",
+       subtitle = "Same people, same income scale, two very different outcomes (age 15+)",
+       x = "MPCE quintile", y = "Percent", colour = "Sex") +
+  theme_minimal()
+```
+
+**What this shows.** Women's internet use climbs from 37.7% to 73.8% as
+households get richer, while women's economic participation *falls* slightly
+(35.5% to 32.1%) and men's stays flat at roughly 74-80%. The same rise in
+prosperity that puts a smartphone in a woman's hand is associated with her being
+*less* likely to be in the labour force. This echoes a pattern long documented
+in India's female labour-force-participation literature: women often withdraw
+from low-paid manual work as household income rises, without a matching supply
+of acceptable alternatives.
+
+It also explains why digital skill looks unrelated to work in the previous
+chart: many economically active people, in agriculture, construction and
+informal trade, do not need digital skills for their jobs.
+
+### Where does digital skill pay off?
+
+```{r chart-6c-bar}
+dividend <- member_design |>
+  filter(mpce_quintile %in% q_labels[c(1, 5)]) |>
+  group_by(mpce_quintile, capability_tier, sex) |>
+  summarize(pct_active = 100 * survey_mean(economically_active == "Yes", vartype = NULL)) |>
+  mutate(mpce_quintile = droplevels(mpce_quintile))
+
+ggplot(dividend, aes(capability_tier, pct_active, fill = sex)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = round(pct_active)), position = position_dodge(width = 0.9),
+            vjust = -0.4, size = 3) +
+  facet_wrap(~ mpce_quintile) +
+  scale_fill_manual(values = sex_cols) +
+  scale_y_continuous(limits = c(0, 95)) +
+  labs(title = "Digital skill pays off for women only in the richest households",
+       subtitle = "Association only, not a causal claim",
+       x = "Digital capability tier", y = "Economically active (%)", fill = "Sex") +
+  theme_minimal()
+```
+
+**What this shows.** In the poorest fifth, moving a woman from Low to High
+capability is associated with *lower* participation (37.6% to 31.6%): digital
+skill there mostly marks someone who is studying or outside manual work. In the
+richest fifth the pattern flips: High-capability women are at 43.0%, against
+24.2% in the Medium tier and 31.5% in the Low tier. The "digital dividend" for
+women is concentrated where white-collar jobs exist. That is a labour-market
+question, not a training question.
+
+### By education and sex
+
+```{r chart-7-bar}
+econ_by_edu_sex <- member_design |>
+  group_by(has_course, sex) |>
+  summarize(pct_active = 100 * survey_mean(economically_active == "Yes", vartype = NULL))
+
+ggplot(econ_by_edu_sex, aes(has_course, pct_active, fill = sex)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = sex_cols) +
+  labs(title = "Economic participation, by education and sex",
+       x = "Has a course record", y = "Economically active (%)", fill = "Sex") +
+  theme_minimal()
+```
+
+---
+
+# Part 2: Formal Statistical Analysis
+
+Part 1 describes the population. Part 2 asks two further questions: are these
+patterns too large to be sampling noise, and do they survive when several
+explanatory variables are considered together?
+
+**Note on method.** The tests below use the individual-level data **without
+survey weights**, so they describe relationships in the analysed sample. The
+weighted figures in Part 1 are the population-representative estimates. With
+about one million observations, almost any difference is statistically
+significant, so we focus on the *size* of effects (odds ratios, differences in
+means) rather than p-values alone.
+
+## Research questions
+
+**Research Question 1 (primary).** Does the gender gap in internet use persist once we control
+for household spending power, age, education and sector, or is it explained
+away? We test it with a sex-by-income interaction.
+
+**Research Question 2 (secondary).** Is digital capability associated with economic
+participation, and does that association depend on household income?
+
+```{r reg-data}
+reg_data <- members
+nrow(reg_data)
+```
+
+## Do men and women differ in mean capability?
+
+```{r ttest}
+t.test(capability_score ~ sex, data = reg_data)
+```
+
+## Spending power and digital capability
+
+```{r cor}
+cor.test(reg_data$mpce, reg_data$capability_score)
+```
+
+## Two-way ANOVA: capability by income quintile and sex
+
+```{r anova}
+summary(aov(capability_score ~ mpce_quintile * sex, data = reg_data))
+```
+
+**What these three tests show.** Men's mean capability score is 2.05 against
+1.44 for women, a gap of about 0.61 points on the 0-4 scale (p < 2.2e-16). The
+correlation between MPCE and capability is 0.272: positive and significant, but
+modest, so spending power alone is far from the whole story. The ANOVA shows
+significant effects of income quintile, sex and their interaction, meaning the
+size of the gender gap itself varies across income groups. ANOVA does not say
+*which* quintiles differ; the regression below does.
+
+## Regression 1: who can use the internet? (logistic)
+
+`can_use_internet` is 0/1, so we use logistic regression. We build up in four
+steps to see what each group of variables adds.
+
+```{r logit-models}
+models_internet <- list(
+  model_1_sex_only      = can_use_internet ~ sex,
+  model_2_add_income    = can_use_internet ~ sex + mpce_quintile,
+  model_3_full_controls = can_use_internet ~ sex + mpce_quintile + age_group +
+                            has_course + sector,
+  model_4_sex_x_income  = can_use_internet ~ sex * mpce_quintile + age_group +
+                            has_course + sector
+) |>
+  map(glm, data = reg_data, family = binomial)
+```
+
+```{r odds-ratios}
+model_4 <- models_internet$model_4_sex_x_income
+
+odds_ratios <- tidy(model_4, exponentiate = TRUE) |>
+  mutate(conf.low  = exp(log(estimate) - 1.96 * std.error),
+         conf.high = exp(log(estimate) + 1.96 * std.error),
+         term = str_replace_all(term, "\n", " ")) |>
+  mutate(across(where(is.numeric), \(x) round(x, 3)))
+
+knitr::kable(odds_ratios,
+             caption = "Model 4: odds ratios for being able to use the internet")
+```
+
+**Reading Model 4.** Reference groups: men, Q1 (poorest), age 15-24, no course
+record, rural.
+
+* **Sex.** The female odds ratio is 0.461 (p < 0.001): in the poorest quintile,
+  women have about **54% lower odds** of using the internet than otherwise
+  similar men.
+* **Income.** Odds ratios rise from 1.461 (Q2) to 6.371 (Q5) relative to Q1, even
+  after controlling for age, education, sex and sector.
+* **Education and place.** Having a course record has an odds ratio of 6.484;
+  urban respondents have 1.801 times the odds of rural ones.
+* **Does the gap narrow with income?** The Q2-Q4 interactions are not significant
+  (p = 0.666, 0.381, 0.155). The Q5 interaction is 1.065 (p = 0.001), so the gap
+  is slightly smaller in the richest quintile. Even there the combined female
+  effect is about 0.461 x 1.065 = 0.491, so **women's odds remain roughly half
+  of men's**. Higher income is associated with a narrower gap, not a closed one.
+
+R-squared is not reported because the outcome is binary; we compare models with
+deviance and AIC instead (lower is better).
+
+```{r fit-stats}
+models_internet |>
+  map(glance) |>
+  list_rbind(names_to = "model") |>
+  select(model, null.deviance, deviance, AIC) |>
+  knitr::kable(caption = "Model fit comparison")
+```
+
+**Model fit.** Adding income cuts deviance substantially, and adding age,
+education and sector cuts it much further (from 1,262,368 in the sex-only model
+to 840,870 in Model 3). The interaction in Model 4 improves fit only slightly
+(deviance 840,856), so most of the explanatory power comes from the main
+controls.
+
+### Multicollinearity check
+
+Income, sector and education are all related to socio-economic status, so we
+check variance inflation factors for Model 3 (VIF is not meaningful in the usual
+way once an interaction is included).
+
+```{r vif}
+vif(models_internet$model_3_full_controls)
+```
+
+All adjusted GVIF values are between about 1.01 and 1.06, far below the usual
+concern thresholds (5-10), so the coefficients are not being distorted by
+overlap among the predictors.
+
+## Regression 2: economic participation (logistic)
+
+Does the link between digital capability and work depend on income? We add a
+capability-by-income interaction.
+
+```{r logit-econ}
+model_econ <- glm(
+  economically_active == "Yes" ~ capability_tier * mpce_quintile + sex + sector,
+  data = reg_data, family = binomial
+)
+
+tidy(model_econ, exponentiate = TRUE) |>
+  mutate(conf.low  = exp(log(estimate) - 1.96 * std.error),
+         conf.high = exp(log(estimate) + 1.96 * std.error),
+         term = str_replace_all(term, "\n", " ")) |>
+  mutate(across(where(is.numeric), \(x) round(x, 3))) |>
+  knitr::kable(caption = "Odds ratios: economic participation (age 15+)")
+
+glance(model_econ) |>
+  select(null.deviance, deviance, AIC) |>
+  knitr::kable(caption = "Fit statistics")
+```
+
+**Reading the model.**
+
+* In the poorest group (Q1) the odds ratios for Medium (0.909) and High (0.936)
+  capability are *below 1*: no positive link between digital skill and work.
+* The interactions grow with income: for High capability, 1.065 in Q3, 1.228 in
+  Q4 and 2.064 in Q5 (all significant). In the richest quintile the combined
+  effect is about 0.936 x 2.064 = 1.93, so **highly capable people have roughly
+  1.9 times the odds of being economically active** as low-capability people.
+* Women have far lower odds of economic participation (odds ratio 0.152,
+  p < 0.001) after controlling for capability, income and sector.
+
+This supports the descriptive finding: digital capability is associated with
+work mostly where household resources and the local job market let it count.
+
+## Discussion
+
+**Does the gender gap in internet use survive the controls?** Yes. After
+controlling for income, age, education and sector, the female odds ratio in
+Model 4 is 0.461. The richest-quintile interaction points to some narrowing at
+the top, but not closure.
+
+**Does digital capability help work, and only at the top?** The relationship
+depends on income. The strongest positive association is for high-capability
+people in the richest quintile (interaction odds ratio 2.064). The evidence
+points to a conditional relationship, not a uniform effect.
+
+**Policy reading.** Cheaper phones have largely solved *access to a handset*.
+What remains is (i) devices that support skilled work, (ii) women's and older
+adults' *use* of connectivity inside the household, and (iii) a labour market
+that turns digital skill into jobs. These are different problems and need
+different tools.
+
+## Limitations
+
+* **Association, not causation.** There is no experimental variation in sex or
+  income, and we omit occupation, local labour markets, caste, disability and
+  other factors that may affect both digital use and work.
+* **Weights and clustering.** The regressions ignore survey weights and the
+  clustered design, so standard errors are likely too small and results describe
+  the sample. A natural extension is to refit the models with `survey::svyglm()`.
+* **Education measure.** `has_course` only records whether a person appears in
+  the course file, not years or level of schooling.
+* **Capability score.** The four-item score weights each item equally and the
+  banking item should be checked against the official questionnaire wording
+  before being quoted as "digital banking".
+* **Quintiles** are household-level, so everyone in a household shares the same
+  income group.
+
+## Key takeaways
+
+1. **Access is bought, and the price differs by device.** Phones are near
+   universal; computers are 30 times more common in the richest fifth.
+2. **The sex-of-household-head gap is mostly an income gap.**
+3. **Income lifts women a long way but never all the way**, and the regression
+   confirms the gender gap survives controls (odds ratio 0.46).
+4. **The divide is generational as well as economic**: it has closed for rich
+   young adults and is widest for middle-aged adults in poor households.
+5. **Money buys women connectivity, not work.** Digital inclusion and economic
+   inclusion are not the same project.
+6. **The digital dividend appears at the top**, where there are jobs that reward
+   digital skill.
+
+---
+
+*Data: MoSPI, NSS 79th Round CAMS (2022-23). Analysis code and data-preparation
+script are in the project repository. Prepared as coursework for B.A.
+Economics Honors, Christ University.*

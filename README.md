@@ -1,2 +1,24 @@
-# digital-divide-india
-Analysed about 1 million adults in India’s 2022-23 NSS Comprehensive Annual Modular Survey to study the digital gender divide. Used survey-weighted descriptive analysis and logistic regression in R. Found that income narrows but never closes the gender gap in internet use, and that money buys women connectivity but not work.
+# The Digital Divide in India — NSS 79th Round CAMS (2022-23)
+
+Coursework, B.A. Economics, Christ (Deemed to be) University.
+Report: `digital-divide-india.Rmd` (knit to HTML).
+
+## Files
+| File | Purpose |
+|---|---|
+| `digital-divide-india.Rmd` | The report (descriptive charts + regression analysis) |
+| `prepare_data.R` | Turns the huge raw CSVs into two small `.rds` files (run once, locally) |
+| `data/*.rds` | Slim analysis data (committed to GitHub) |
+| `data-raw/` | Raw MoSPI CSVs — **not** committed (see `.gitignore`) |
+| `manifest.json` | Package list Connect Cloud needs (generated, see below) |
+
+## Steps to publish on Posit Connect Cloud
+1. Put the 3 raw CSVs in `data-raw/`, then run `source("prepare_data.R")`.
+   Check `data/` is well under 100 MB (GitHub's file limit).
+2. Knit `digital-divide-india.Rmd` locally. If it knits, it will deploy.
+3. In the R console, from this project folder:
+   `install.packages("rsconnect"); rsconnect::writeManifest()`
+   (re-run whenever you add or change a package).
+4. Create a **public** GitHub repo and push everything except `data-raw/`.
+5. At connect.posit.cloud: Publish -> from GitHub -> choose the repo ->
+   primary file `digital-divide-india.Rmd` -> Publish.

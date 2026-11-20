@@ -1,6 +1,6 @@
 # The Digital Divide in India — NSS 79th Round CAMS (2022-23)
 
-Coursework, B.A. Economics, Christ (Deemed to be) University.
+Coursework, B.A. Economics, Christ University.
 Report: `digital-divide-india.Rmd` (knit to HTML).
 
 ## Files

@@ -1,7 +1,7 @@
 ---
 title: "The Digital Divide in India: Money, Gender, Education and Age"
 subtitle: "Evidence from the NSS 79th Round Comprehensive Annual Modular Survey (CAMS), 2022-23"
-author: "Aakansha Sylvia Tamang, Ananya Rathour, Angel Elizabeth and Bhavya — B.A. Economics Honours, 
+author: "Bhavya, Ananya Rathour, Aakansha Sylvia Tamang, and Angel Elizabeth — B.A. Economics Honours, 
 Christ University"
 date: "November 2026"
 output:
